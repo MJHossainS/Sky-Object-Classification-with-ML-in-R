@@ -1,5 +1,5 @@
 ---
-title: "Data Science Project"
+title: "Sky object classifiaction with machine learning in R"
 author: "Mohammad Jaber Hossain"
 date: '2022-05-19'
 output: word_document
