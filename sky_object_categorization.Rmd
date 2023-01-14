@@ -29,7 +29,7 @@ library(raster)
 
 We need to load the Dataset first: 
 ```{r}
-load("star.rdata")
+load("star.rdata") #Put the dataset in current directory, use this command to check current directory, getwd()
 dataset<-star.df
 dataset[14]<- factor(dataset[,14])
 ```
