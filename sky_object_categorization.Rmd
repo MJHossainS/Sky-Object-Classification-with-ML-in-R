@@ -1,0 +1,510 @@
+---
+title: "Data Science Project"
+author: "Mohammad Jaber Hossain"
+date: '2022-05-19'
+output: word_document
+---
+
+
+## R Markdown
+**Loading Dataset and Preliminary look on dataset: **
+Let's import all the necessary libraries: 
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(caret)
+#install.packages("kernlab")
+#library(kernlab)
+#install.packages("caretEnsemble")
+#library(caretEnsemble)
+#install.packages("MASS")
+library(MASS)
+#install.packages("factoextra")
+library(factoextra)
+#install.packages("raster")
+library(raster)
+```
+
+We need to load the Dataset first: 
+```{r}
+load("star.rdata")
+dataset<-star.df
+dataset[14]<- factor(dataset[,14])
+```
+**Summary of the Data Set**
+```{r}
+head(dataset)
+```
+```{r}
+tail(dataset)
+```
+
+```{r}
+dim(dataset)
+```
+So, the dataset is consist of 80000 samples and 18 columns, 17 feature columns and one class column. Let's explore a little more detail summery of the columns. 
+```{r}
+summary(dataset)
+```
+
+```{r}
+str(dataset)
+```
+
+Distribution of the class:
+```{r}
+table(dataset$class)
+```
+```{r}
+qplot(class,data=dataset)
+```
+
+obj_ID (Object Identifier, the unique value that identifies the object in the image catalog), run_ID (Run Number used to identify the specific scan), rerun_ID (Rerun Number to specify how the image was processed), cam_col (Camera column to identify the scanline within the run),field_ID(Field number to identify each field), spec_obj_ID (Unique ID used for optical spectroscopic objects), plate (plate ID, identifies each plate in SDSS), MJD (Modified Julian Date, used to indicate when a given piece of SDSS data was taken), fiber_ID (fiber ID that identifies the fiber that pointed the light at the focal plane in each observation)
+
+These column do not have any contribution on class selection, they are used to identify each sample uniquly which informaions are not important or don't have contribution in our classification problem. So we are not going to consider this column for our classification dataset anymore.
+
+```{r}
+dataset = subset(dataset, select = -c(obj_ID,run_ID,rerun_ID,cam_col,field_ID,spec_obj_ID, plate, MJD,fiber_ID))
+```
+
+We check there is any missing value on the remaining dataset, but there is no missing value found. 
+```{r}
+sum(is.na(dataset))
+```
+Remaining columns for our classification problem will be found below. Here Class variable is the dependent one, other 8 variables are independent, and the class variable is dependent on these 8 variables.  
+```{r}
+str(dataset)
+```
+All 8 independent variables are numbers but the class column was character, that is why we convert this colums values to factor in the very beginning after loading the dataset. Let's explore the dataset in more analytical way to find the problems related to outliers or to find the correlation in between.
+
+```{r}
+summary(dataset)
+```
+
+In 'u', 'g' and 'z' the minimum value looks weird if we compare the value with mean value of the columns and the maximum values of the column which might have problems like outlier which can be consider as error in data. Let's see this coloums distribution using histogram.  
+
+
+
+```{r}
+palpha<-qplot(alpha,data=dataset,binwidth=1)
+pdelta<-qplot(delta,data=dataset,binwidth=1)
+pu<-qplot(u,data=dataset,binwidth=100)
+pg<-qplot(g,data=dataset,binwidth=100)
+pr<-qplot(r,data=dataset,binwidth=1)
+pi<-qplot(i,data=dataset,binwidth=1)
+pz<-qplot(z,data=dataset,binwidth=100)
+pclass<-qplot(class,data=dataset)
+predshift<-qplot(redshift,data=dataset,binwidth=0.5)
+
+grid.arrange(palpha, pdelta, pu, pg, pr, pi, pz, pclass, predshift, nrow = 3,ncol=3)
+```
+From the graph we can see that column alpha distribution looks like bimodal data distribution, delta looks like bimodal distribution as we with a little bit is skewed in 1st quarter  around the values of zero. r and i colums distribution looks like gaussian  distribution. The class "Galaxy" seems dominant class , whereas QSO & STAR are the relatively minor classes. The 'redshift' distribution is biased to approximately zero, the majority of the numbers range between 0 and 0.6/0.7. Some numbers are between 1 and 3, while a little number of data may be are between 3 and 7. 
+
+But u, g and z looks like they have outlier problems, the graph indicates may b some sample are pretty far from zero, which we predict earlier by noticing the minimum value of this columns -9999.
+
+lets find how many data of these column are below 0 for each column.
+```{r}
+dataset$u[which(dataset$u<0)]
+```
+
+```{r}
+dataset$g[which(dataset$g<0)]
+```
+
+```{r}
+dataset$z[which(dataset$z<0)]
+```
+By these commands we try to figure out the samle having value less than 0, any how many of them are there under 0. But, in all three columns only one sample is under 0 and which is -9999 in all cases. So now, to avoid this outlier either we can delete the sample, or we can make this -9999 as 0. So as only one sample is under 0 in range, we can just clip the column from 0 to their maximum value. Let's make it 0 for all three cases:
+
+```{r}
+dataset$u = clamp(dataset$u,0, 32.78)
+summary(dataset$u)
+```
+```{r}
+dataset$g = clamp(dataset$g,0, 31.60)
+summary(dataset$g)
+```
+
+```{r}
+dataset$z = clamp(dataset$z,0, 29.38)
+summary(dataset$z)
+```
+Let's explore the distribution of that three column after clipping: 
+```{r}
+p2u<-qplot(u,data=dataset,binwidth=1)
+p2g<-qplot(g,data=dataset,binwidth=1)
+p2z<-qplot(z,data=dataset,binwidth=1)
+
+grid.arrange(p2u, p2g,p2z, nrow = 1,ncol=3)
+```
+After the clipping all three u, g and z columns distribution looks like Gaussian distribution. 
+
+
+```{r}
+datsetForCorr= dataset[,-8]
+correlationMatrix <- cor(datsetForCorr)
+# summarize the correlation matrix
+print(correlationMatrix)
+```
+Find attributes that are highly corrected :
+
+```{r}
+highlyCorrelated50 <- findCorrelation(correlationMatrix, cutoff=0.5)
+highlyCorrelated75 <- findCorrelation(correlationMatrix, cutoff=0.75)
+highlyCorrelated90 <- findCorrelation(correlationMatrix, cutoff=0.90)
+highlyCorrelated95 <- findCorrelation(correlationMatrix, cutoff=0.95)
+# print indexes of highly correlated attributes
+#print(highlyCorrelated50)
+print(highlyCorrelated75)
+#print(highlyCorrelated90)
+#print(highlyCorrelated95)
+```
+cutoff=0.5 attributes: 
+```{r}
+names(dataset)[c(highlyCorrelated50)]
+```
+cutoff=0.75 attributes: 
+```{r}
+names(dataset)[c(highlyCorrelated75)]
+```
+
+cutoff=0.90 attributes: 
+```{r}
+names(dataset)[c(highlyCorrelated90)]
+```
+
+cutoff=0.95 attributes: 
+```{r}
+names(dataset)[c(highlyCorrelated95)]
+```
+The absolute correlation of the features 'r','i','g','z' is larger than 0.5. The absolute correlation of the characteristics 'r','i','g' is larger than 0.75 (which sometimes consider as ideal). The absolute correlation between the characteristics 'r','i' is larger than 0.90.
+
+Now, to rank the attributes according on their feature, let's utilize LDA as a prototype classification algorithm to determine the importance of the features. We already have a list of highly associated characteristics; once we know how important the features are, we can decide whether to eliminate them or design them into new features.
+
+```{r}
+TrainingParameters <- trainControl(method = "cv", number = 5, selectionFunction='oneSE') 
+modelLda <- train(class~., data=dataset, method="lda", preProcess="scale", trControl=TrainingParameters)
+important<-varImp(modelLda, scale=FALSE)
+print(important)
+
+```
+```{r}
+plot(important)
+```
+
+So looking into the rank of data, we can go for designing into new features, usually we could delete duplicate characteristics, specially those with high correlation, but the significance plot shows that features 'r','i','g','z' are all extremely essential and out of this four 'z','i' are more important. As a result, we cannot simply remove redundant features since they are crucial. Instead, we may build the highly correlated characteristics into new features, reducing the amount of redundant features while retaining the crucial ones. We know PCA can help us to accomplishing this.
+
+Considering the ideal situation cut of 0.75, lets do PCA on 'r','i','g'. Let's explore the relationship in between themselves using some plots. 
+```{r include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+```
+
+```{r}
+g1<- ggplot(data = dataset, aes(y = r, x = i)) +
+   geom_point(alpha = 1/4, position = position_jitter(h = 0), size = 4) +
+   geom_smooth(method = 'lm')
+
+g2<- ggplot(data = dataset, aes(y = g, x = i)) +
+   geom_point(alpha = 1/4, position = position_jitter(h = 0), size = 4) +
+   geom_smooth(method = 'lm')
+g3<- ggplot(data = dataset, aes(y = r, x = g)) +
+   geom_point(alpha = 1/4, position = position_jitter(h = 0), size = 4) +
+   geom_smooth(method = 'lm')
+
+grid.arrange(g1, g2,g3, nrow = 1,ncol=3)
+```
+
+So, we can see this three graphs again how they are significantly connected. So, let's do PCA now.
+
+```{r}
+features_important<-dataset[,c(5,6,4)]
+pr.out <- prcomp( features_important , scale = TRUE )
+#principal Components
+pr.out$x[c(1:5),]
+```
+
+```{r}
+biplot(pr.out,scale =0)
+```
+
+```{r}
+summary(pr.out)
+```
+The first principal component PC1 explains 94 percent of the variation in the data, whereas the second component PC2 explains 0.05. So we can consider this two and ignore the rest.
+
+For now, let's discard that three 'r','i','g' attributes and add this two principle component in the dataset.
+```{r}
+datasetReserve<- dataset #reserving dataset if required
+dataset <- subset(dataset, select = -c(r,i,g))
+str(dataset)
+```
+```{r}
+dataset$pc1<-pr.out$x[,1]
+dataset$pc2<-pr.out$x[,2]
+str(dataset)
+```
+
+
+**Dataset Splitting**
+In classification, the data set must be separated into training and test sets. The training set is used to train the model, while the test set is used to evaluate the classification model's performance. We will sample 75% of the data set for training and 25% for testing.
+
+The function trainControl generates parameters that further control how models are created, as resmapling method cross validation is used here. selectionFunction, this function is used to select the optimal tuning parameter, here we choose up to one standard error.
+```{r}
+set.seed(2)
+# Stratified sampling
+TrainingDataIndex <- createDataPartition(dataset$class, p=0.75, list = FALSE)
+# Create Training Data 
+trainingData <- dataset[TrainingDataIndex,]
+testData <- dataset[-TrainingDataIndex,]
+TrainingParameters <- trainControl(method = "cv", number = 5, selectionFunction='oneSE') 
+```
+
+**Classification with Knn classifier**
+```{r}
+set.seed(2)
+mknn <- train(class ~ ., data = trainingData, 
+                      method = "knn",
+                      preProcess=c("scale","center"),
+                      trControl= TrainingParameters,
+                      tuneLength = 5,
+                      na.action = na.omit # not required, then again using as default 
+)
+
+#Predictions
+knnPredictions <-predict(mknn, testData, na.action = na.pass)
+# Print confusion matrix and results
+knnCls <-confusionMatrix(knnPredictions,testData$class)
+print(knnCls)
+```
+
+**Classification using LDA: **
+```{r}
+set.seed(2)
+mlda <- train(class~., data = trainingData, 
+                      method = "lda",
+                      preProcess=c("scale","center"),
+                      trControl= TrainingParameters,
+                      tuneLength = 5,
+                      na.action = na.omit
+)
+
+#Predictions
+ldaPredictions <-predict(mlda, testData, na.action = na.pass)
+# Print confusion matrix and results
+ldaCls <-confusionMatrix(ldaPredictions,testData$class)
+print(ldaCls)
+```
+
+
+**Classification using multinomial Logistic regression: **
+
+```{r}
+set.seed(2)
+mlr <- train(class ~ ., data = trainingData, 
+                      method = "multinom",
+                      preProcess=c("scale","center"),
+                      trControl= TrainingParameters,
+                      tuneLength = 5,
+                      na.action = na.omit
+)
+#Predictions
+lrPredictions <-predict(mlr, testData, na.action = na.pass)
+# Print confusion matrix and results
+lrCls <-confusionMatrix(lrPredictions,testData$class)
+#knnCls <-confusionMatrix(knnPredictions, testData$V1)
+print(lrCls)
+```
+**Classification with Classification Tree**
+```{r}
+set.seed(2)
+mtree <- train(class ~ ., data = trainingData, 
+                      method = "rpart",
+                      preProcess=c("scale","center"),
+                      trControl= TrainingParameters,
+                      na.action = na.omit
+)
+
+#Predictions
+DTPredictions <-predict(mtree, testData, na.action = na.pass)
+# Print confusion matrix and results
+cmTree <-confusionMatrix(DTPredictions, testData$class)
+print(cmTree)
+#DecTreeModel$times$everything
+```
+
+**Classification with Random Forest classifier**
+```{r}
+set.seed(2)
+mrf <- train(class ~ ., data = trainingData, 
+                      method = "rf",
+                      preProcess=c("scale","center"),
+                      trControl= TrainingParameters,
+                      tuneLength = 5,
+                      na.action = na.omit
+)
+
+#Predictions
+rfPredictions <-predict(mrf, testData, na.action = na.pass)
+# Print confusion matrix and results
+rfCls <-confusionMatrix(rfPredictions,testData$class)
+#knnCls <-confusionMatrix(knnPredictions, testData$V1)
+print(rfCls)
+```
+
+**Classification with Neural Networks**
+```{r}
+# train model with neural networks
+set.seed(2)
+mann <- train(class ~ ., data = trainingData, 
+                      method = "nnet",
+                      preProcess=c("scale","center"),
+                      trControl= TrainingParameters,
+                      #tuneLength = 5,
+                      na.action = na.omit
+)
+NNPredictions <-predict(mann, testData)
+# Create confusion matrix
+cmNN <-confusionMatrix(NNPredictions,testData$class)
+print(cmNN)
+```
+
+**Classification using SVM**
+```{r}
+set.seed(2)
+msvm <- train(class ~., data = trainingData, method = "svmLinear", trControl = TrainingParameters, preProcess = c("center","scale"), tuneLength = 10)
+
+SVMPredictions <-predict(msvm, testData)
+# Create confusion matrix
+cmSVM <-confusionMatrix(SVMPredictions,  as.factor(testData$class))
+print(cmSVM)
+```
+
+
+**Additional task:Classification with Boosted trees**
+```{r}
+set.seed(2)
+
+
+
+mboosttree <- train(class ~ ., 
+                      data = trainingData, 
+                      method = "gbm",  # for bagged tree
+                      tuneLength = 2,  # choose up to 5 combinations of tuning parameters
+                      #metric = "RMSE",  # evaluate hyperparamter combinations with ROC
+                      trControl = trainControl(
+                        method = "cv",  # k-fold cross validation
+                        number = 5,  # 5 folds
+                        savePredictions = "final",       # save predictions for the optimal tuning parameter1
+                        verboseIter = FALSE,
+                        returnData = FALSE
+                        )
+                      )
+#Predictions
+boosttreePredictions <-predict(mboosttree, testData, na.action = na.pass)
+# Print confusion matrix and results
+boosttreeCls <-confusionMatrix(boosttreePredictions,testData$class)
+print(boosttreeCls)
+```
+
+**Additional task:Classification with Different ANN (20 neurons in hidden layer)**
+```{r}
+# train model with neural networks
+set.seed(2)
+mann20 <- train(class ~ ., data = trainingData, 
+                      method = "nnet",
+                      preProcess=c("scale","center"),
+                      trControl= TrainingParameters,
+                      tuneGrid = data.frame(size=20, decay=0.1),
+                      #tuneLength = 5,
+                      na.action = na.omit
+)
+NNPredictions20 <-predict(mann20, testData)
+# Create confusion matrix
+cmNN20 <-confusionMatrix(NNPredictions20,testData$class)
+print(cmNN20)
+```
+
+**Clustering techniques**
+```{r}
+set.seed(2)
+datasetCluster <- subset(dataset, select = -c(class))
+str(datasetCluster)
+```
+
+```{r}
+set.seed(2)
+#scale the cluster dataset
+datasetCluster2<- scale(datasetCluster)
+#diatance<- dist(datasetCluster2)
+
+#memory.limit(size=30720)  #use this fuction to increase the allocated memory
+#calculate the number of cluster we should use using elbow plot and within sum squares
+#fviz_nbclust(datasetCluster2, kmeans, method = "wss") + labs(subtitle = "Elbow method")
+summary(datasetCluster2)
+```
+use "fviz_nbclust" this function to find the number of  number of cluster we should use , have a look on the graph. Choose the number when the graph was consistent upto. This function may go out of allocated memory, try to increase the size, then apply.
+```{r}
+#fviz_nbclust(datasetCluster2, kmeans, method = "wss") + labs(subtitle = "Elbow method") 
+```
+
+
+```{r}
+#I plotted the graph once and found 3 is the suitable one, but the function crashes my runtime for several times.
+set.seed(2)
+kmean_Cluster <- kmeans(datasetCluster2, centers = 3, nstart = 100,iter.max = 40)
+#print(kmean_Cluster)
+```
+
+```{r}
+fviz_cluster(kmean_Cluster, data = datasetCluster2)
+```
+```{r}
+x <- dataset[,-5]
+y <- dataset[,5]
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+featurePlot(x=x, y=y, plot="density", scales=scales)
+```
+```{r}
+qplot(class,data=dataset,geom="density")
+```
+From the above graph we can see that the classes had some overlap, in our created cluster using kmeans , we can see so overlap there as well.
+
+Let's create new dataset using the cluster we got, considering them as a class.
+```{r}
+set.seed(2)
+cls<- kmean_Cluster$cluster
+newClusterDataset<-data.frame(dataset,cls)
+str(newClusterDataset)
+```
+
+Let's use ann for classification of this new dataset created by clusterring:
+```{r}
+
+set.seed(2)
+# Stratified sampling
+TrainingDataIndex2 <- createDataPartition(newClusterDataset$cls, p=0.75, list = FALSE)
+# Create Training Data 
+trainingData2 <- newClusterDataset[TrainingDataIndex2,]
+testData2 <- newClusterDataset[-TrainingDataIndex2,]
+TrainingParameters2 <- trainControl(method = "cv", number = 5, selectionFunction='oneSE') 
+
+
+# train model with neural networks
+set.seed(2)
+mann2 <- train(as.factor(cls) ~ ., data = trainingData2, 
+                      method = "nnet",
+                      preProcess=c("scale","center"),
+                      trControl= TrainingParameters2,
+                      #tuneLength = 5,
+                      na.action = na.omit
+)
+NNPredictions2 <-predict(mann2, testData2)
+# Create confusion matrix
+cmNN2 <-confusionMatrix(NNPredictions2,as.factor(testData2$cls))
+print(cmNN2)
+```
+
+
+
